@@ -35,6 +35,38 @@ _HIGH_TRUST_HINTS = (
 )
 
 
+_LANG_HINTS = {
+    "spanish": "es", "french": "fr", "german": "de", "portuguese": "pt",
+    "italian": "it", "hindi": "hi", "mandarin": "zh", "chinese": "zh",
+    "japanese": "ja", "korean": "ko", "arabic": "ar",
+}
+
+
+def localize_query(query: str, language: str, config: "Config") -> str:
+    """Translate/adapt a search query into the target language for native retrieval.
+
+    Uses the LLM when available; otherwise returns the query annotated with the
+    language so Tavily can still bias toward that locale. English is a no-op.
+    """
+    if not language or language.strip().lower() in ("english", "en", ""):
+        return query
+    if getattr(config, "uses_llm", False):
+        try:
+            from src.llm import get_llm
+
+            llm = get_llm(config)
+            prompt = (
+                f"Translate this market-research search query into {language}. "
+                f"Return only the translated query, no quotes:\n{query}"
+            )
+            translated = llm.invoke(prompt).content.strip()
+            if translated:
+                return translated
+        except Exception:
+            pass
+    return f"{query} ({language})"
+
+
 def _domain(url: str) -> str:
     try:
         netloc = urlparse(url).netloc.lower()

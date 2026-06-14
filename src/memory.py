@@ -9,7 +9,7 @@ import json
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from src.state import EvidenceItem, ReasoningStep, Signal, SubQuestion, TaskRecord
 
@@ -83,12 +83,16 @@ def persist_state(
     reasoning_trace: List[ReasoningStep],
     confidence: float,
     gaps: List[str],
+    signal_trends: Optional[List[dict]] = None,
 ) -> Path:
     """Persist the full research state to a JSON file for inspection / resumption."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"research_state_{timestamp}.json"
 
+    internal_sources = sorted(
+        {e["source_title"] for e in evidence if e.get("source_type") == "internal"}
+    )
     payload = {
         "generated_at": datetime.now().isoformat(),
         "research_question": research_question,
@@ -96,7 +100,9 @@ def persist_state(
         "task_state": summarize_task_state(task_records),
         "task_records": task_records,
         "evidence_count": len(evidence),
+        "internal_sources": internal_sources,
         "signals": [s.model_dump() for s in signals],
+        "signal_trends": signal_trends or [],
         "knowledge_graph": knowledge_graph,
         "reasoning_trace": [r.model_dump() for r in reasoning_trace],
         "confidence": confidence,

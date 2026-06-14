@@ -8,8 +8,10 @@ gap analysis) is reduced to heuristics in this mode.
 from typing import List
 
 from src.config import CONSUMER_THEME_TAGS, DEFAULT_SUB_QUESTIONS, Config
+from src.internal_data import internal_evidence_for
 from src.knowledge_graph import _heuristic_graph
 from src.memory import make_task_records, offload_context
+from src.signal_detection import score_signals_statistically
 from src.state import (
     BrandInsight,
     EvidenceItem,
@@ -20,7 +22,7 @@ from src.state import (
     SynthesisResult,
     ThemeCluster,
 )
-from src.tools import multi_source_search
+from src.tools import localize_query, multi_source_search
 
 
 def plan_node_tavily(state: ResearchState, config: Config) -> dict:
@@ -35,12 +37,18 @@ def plan_node_tavily(state: ResearchState, config: Config) -> dict:
 
 def research_node_tavily(state: ResearchTask, config: Config) -> dict:
     sub_q = state["sub_question"]
+    language = getattr(sub_q, "language", "English")
+    search_query = localize_query(sub_q.question, language, config)
     results, answer = multi_source_search(
-        sub_q.question, config, web_results=config.searches_per_question,
+        search_query, config, web_results=config.searches_per_question,
         community_results=1, include_answer=True,
     )
     summary = answer or "\n".join(f"- {r['title']}: {r['content'][:200]}" for r in results)
     summary = summary or "No Tavily summary available."
+
+    internal_items = internal_evidence_for(
+        sub_q.category, sub_q.question, config.internal_data_dir, language
+    )
 
     evidence: List[EvidenceItem] = []
     for r in results:
@@ -48,7 +56,7 @@ def research_node_tavily(state: ResearchTask, config: Config) -> dict:
             {
                 "sub_question": sub_q.question,
                 "category": sub_q.category,
-                "language": getattr(sub_q, "language", "English"),
+                "language": language,
                 "source_title": r["title"],
                 "source_url": r["url"],
                 "source_type": r["source_type"],
@@ -57,6 +65,9 @@ def research_node_tavily(state: ResearchTask, config: Config) -> dict:
                 "summary": summary,
             }
         )
+    for i in internal_items:
+        i["summary"] = summary
+        evidence.append(i)
     if not evidence:
         evidence.append(
             {
@@ -133,12 +144,19 @@ def synthesize_node_tavily(state: ResearchState, config: Config) -> dict:
         "Niche insurgents attack individual categories rather than the incumbent holistically.",
         "Community and social branding outperform legacy mass-market positioning.",
     ]
+    ranked = score_signals_statistically(
+        state.get("signals", []),
+        state["evidence"],
+        config.statistical_weight,
+        config.signal_threshold,
+    )
     return {
         "synthesis": SynthesisResult(
             brand_insights=brand_insights,
             theme_clusters=theme_clusters,
             key_trends=key_trends,
-        )
+        ),
+        "ranked_signals": ranked,
     }
 
 
@@ -176,6 +194,20 @@ def write_report_node_tavily(state: ResearchState, config: Config) -> dict:
         for r in kg.get("relationships", [])[:25]
     ) or "No relationships extracted."
 
+    ranked = state.get("ranked_signals", [])
+    signals_text = "\n".join(
+        f"- combined {s.combined_score:.2f} (reason {s.score:.2f} / stat "
+        f"{s.statistical_score:.2f}; {s.source_count} sources {s.source_types}) "
+        f"[{s.category}] {s.statement}"
+        for s in ranked[:15]
+    ) or "No scored signals."
+
+    internal_sources = "\n".join(
+        f"- {e['source_title']}: {e['snippet'][:160]}"
+        for e in state["evidence"]
+        if e.get("source_type") == "internal"
+    ) or "No internal data sources were matched for this run."
+
     report = f"""# Emerging Competitors to {target}
 ## Market Intelligence Report (Tavily mode)
 
@@ -191,6 +223,14 @@ heuristic signal tagging, heuristic knowledge graph, single-pass verification.
 ## Emerging Competitors by Category
 
 {"".join(sections)}
+
+## Market Signals vs Noise (reasoning + statistical)
+
+{signals_text}
+
+## Internal vs External Signals
+
+{internal_sources}
 
 ## Knowledge Graph Highlights
 

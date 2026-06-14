@@ -169,11 +169,16 @@ The report must include these sections:
    detection, knowledge-graph construction, verifier-driven gap analysis)
 3. **Emerging Competitors by Category** — Table/structured list of brands per category
 4. **Why Consumers Choose These Brands** — Analysis organized by consumer themes
-5. **Market Signals vs Noise** — Which findings are durable signals vs temporary noise
+5. **Market Signals vs Noise** — Which findings are durable signals vs temporary noise,
+   noting both the reasoning-based and statistical (corroboration) support
 6. **Knowledge Graph Highlights** — Key entities and relationships discovered
-7. **Key Market Trends & Business Insights** — Strategic implications for {target}
-8. **Sources & Citations** — Source URLs from the evidence
-9. **Recommendations** — 3-5 actionable strategic recommendations
+7. **Cross-Cultural & Regional Signals** — Differences observed across the languages/
+   regions researched ({languages}); omit if only English was analyzed
+8. **Internal vs External Signals** — Where internal data corroborates or contradicts
+   public/community signals (only if internal sources are present in the evidence)
+9. **Key Market Trends & Business Insights** — Strategic implications for {target}
+10. **Sources & Citations** — Source URLs from the evidence
+11. **Recommendations** — 3-5 actionable strategic recommendations
 
 Use professional business language. Be specific with brands, categories, evidence.
 Format as clean markdown with headers, bullets, and tables where appropriate.""",
@@ -181,11 +186,12 @@ Format as clean markdown with headers, bullets, and tables where appropriate."""
         (
             "human",
             """Research question: {research_question}
+Languages/regions analyzed: {languages}
 
 Synthesized findings:
 {synthesis}
 
-Top signals:
+Top signals (with statistical corroboration):
 {signals}
 
 Knowledge graph (entities & relationships):

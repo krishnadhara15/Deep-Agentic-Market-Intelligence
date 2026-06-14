@@ -8,14 +8,15 @@ The default case study identifies emerging brands competing with **Procter & Gam
 
 Given a market question, the agent:
 
-1. **Plans** branch-aware sub-questions across categories (and languages/regions)
-2. **Researches** each branch in parallel from **multiple source types** (general web + community/review/forum)
-3. Scores **signal vs noise** on every branch
+1. **Plans** branch-aware sub-questions across categories and languages/regions
+2. **Researches** each branch in parallel from **multiple source types** — general web, community/review/forum, **and heterogeneous internal data** (CSV/JSON/text)
+3. Scores **signal vs noise** with **both LLM reasoning and a statistical** model (corroboration frequency, source diversity, reliability)
 4. Builds a **dynamic knowledge graph** of brands, products, communities, and trends
 5. Runs a **thinker/verifier** whose **sequential reasoning** chain is tracked through a real **sequential-thinking MCP server**, detecting gaps and spawning follow-up research (bounded loop)
 6. **Synthesizes** signal-ranked insights and writes a structured **market-intelligence report**
+7. Tracks **perception over time** — comparing each run to prior runs to flag rising/falling/new/stable signals
 
-It persists a full **research-state JSON**, an interactive **knowledge-graph HTML**, and the **markdown report** to `outputs/`.
+It persists a full **research-state JSON**, an interactive **knowledge-graph HTML**, and the **markdown report** to `outputs/`, plus a cross-run **perception history**.
 
 ## Architecture
 
@@ -122,9 +123,11 @@ Each run writes to `outputs/`:
 | Aim | Capability | Where |
 |-----|-----------|-------|
 | 1. Long-horizon workflows | Parallel branches, research-state tracking, context off-load | [src/graph.py](src/graph.py), [src/memory.py](src/memory.py) |
-| 2. Dynamic knowledge structures | KG construction, signal/noise scoring, synthesis | [src/knowledge_graph.py](src/knowledge_graph.py), [src/nodes.py](src/nodes.py) |
-| 3. Data access | Multi-source retrieval + reliability scoring | [src/tools.py](src/tools.py) |
+| 2. Dynamic knowledge structures | KG construction, **statistical + reasoning** signal detection, synthesis | [src/knowledge_graph.py](src/knowledge_graph.py), [src/signal_detection.py](src/signal_detection.py), [src/nodes.py](src/nodes.py) |
+| 3. Data access | Multi-source retrieval + reliability scoring + **internal data fusion** | [src/tools.py](src/tools.py), [src/internal_data.py](src/internal_data.py) |
 | Reasoning | Sequential-thinking **MCP server** + verifier gap analysis | [mcp_server/sequential_thinking_server.py](mcp_server/sequential_thinking_server.py), [src/mcp_client.py](src/mcp_client.py), [src/sequential_thinking.py](src/sequential_thinking.py) |
+| Temporal | **Perception-over-time** tracking across runs | [src/temporal.py](src/temporal.py) |
+| Multilingual | Language-aware planning + query localization | [src/tools.py](src/tools.py), [src/prompts.py](src/prompts.py) |
 
 ## Project structure
 
@@ -132,12 +135,16 @@ Each run writes to `outputs/`:
 ├── app.py                     # Streamlit dashboard
 ├── mcp_server/
 │   └── sequential_thinking_server.py  # MCP server (JSON-RPC over stdio)
+├── data/internal/             # Sample heterogeneous internal data (CSV)
 ├── src/
 │   ├── config.py              # Config, target/categories/languages, tunables
 │   ├── state.py               # Graph state + Pydantic schemas
 │   ├── prompts.py             # Prompt templates
 │   ├── llm.py                 # LLM factory (Gemini / OpenAI)
-│   ├── tools.py               # Multi-source retrieval + reliability scoring
+│   ├── tools.py               # Multi-source retrieval, reliability, query localization
+│   ├── internal_data.py       # Heterogeneous internal-data connector
+│   ├── signal_detection.py    # Statistical signal-vs-noise scoring
+│   ├── temporal.py            # Perception-over-time tracking
 │   ├── memory.py              # Research-state tracking, context off-load, persistence
 │   ├── mcp_client.py          # Minimal MCP stdio client
 │   ├── sequential_thinking.py # Sequential reasoning via the MCP server
@@ -147,12 +154,19 @@ Each run writes to `outputs/`:
 │   ├── graph.py               # LangGraph StateGraph
 │   ├── runner.py              # Shared runner (CLI + UI)
 │   └── main.py                # CLI
-├── outputs/                   # Generated artifacts (gitignored)
+├── outputs/                   # Generated artifacts + perception history (gitignored)
 ├── scripts/
 │   ├── smoke_test.py          # Graph-compile smoke test
 │   └── mcp_demo.py            # MCP server end-to-end demo
 └── requirements.txt
 ```
+
+## Feature notes
+
+- **Statistical signal detection** ([src/signal_detection.py](src/signal_detection.py)) blends the LLM reasoning score with an evidence-derived score (corroboration count, source-type diversity, average reliability). Tune the blend with `STATISTICAL_WEIGHT`.
+- **Internal data fusion** ([src/internal_data.py](src/internal_data.py)) ingests CSV/JSON/text from `INTERNAL_DATA_DIR` (sample provided), matched per branch and treated as high-reliability evidence.
+- **Perception over time** ([src/temporal.py](src/temporal.py)) persists signal snapshots to `PERCEPTION_HISTORY_PATH` and reports rising/falling/new/stable trends on each subsequent run.
+- **Multilingual** queries are localized per branch language (LLM translation when available), with a cross-cultural section in the report.
 
 ## Sequential-thinking MCP server
 

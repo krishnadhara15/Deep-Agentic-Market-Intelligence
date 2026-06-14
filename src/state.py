@@ -52,6 +52,38 @@ class Signal(BaseModel):
     reasoning: str = Field(description="Why this is a signal or noise")
     category: str = Field(default="", description="Category this signal belongs to")
 
+    # Statistical signal-detection fields (populated post-hoc, not by the LLM)
+    statistical_score: float = Field(
+        default=0.0, description="Evidence-derived statistical support score (0-1)"
+    )
+    source_count: int = Field(
+        default=0, description="Number of corroborating evidence items"
+    )
+    source_types: List[str] = Field(
+        default_factory=list, description="Distinct source types corroborating it"
+    )
+    combined_score: float = Field(
+        default=0.0, description="Blended reasoning + statistical score (0-1)"
+    )
+
+
+class SignalTrend(BaseModel):
+    """How a signal's strength has evolved across runs (perception over time)."""
+
+    subject: str = Field(description="The signal subject/statement tracked over time")
+    category: str = Field(default="")
+    current_score: float = Field(description="Combined score in the current run")
+    previous_score: Optional[float] = Field(
+        default=None, description="Combined score in the prior run, if any"
+    )
+    delta: float = Field(default=0.0, description="current - previous")
+    direction: str = Field(
+        default="new", description="new | rising | falling | stable"
+    )
+    observations: int = Field(
+        default=1, description="How many runs this subject has appeared in"
+    )
+
 
 class SignalList(BaseModel):
     signals: List[Signal] = Field(description="Scored signals from the evidence")
@@ -227,6 +259,11 @@ class ResearchState(TypedDict):
     # Accumulated evidence and signals
     evidence: Annotated[List[EvidenceItem], operator.add]
     signals: Annotated[List[Signal], operator.add]
+
+    # Statistically re-scored, ranked signals (overwritten, not accumulated)
+    ranked_signals: List[Signal]
+    # Perception-over-time trends vs prior runs (serialized SignalTrend dicts)
+    signal_trends: List[Dict]
 
     # Dynamic knowledge graph (serialized dict for state portability)
     knowledge_graph: Dict

@@ -47,6 +47,15 @@ class Config:
     # Sequential-thinking MCP server
     use_mcp_sequential_thinking: bool = True
 
+    # Statistical signal detection: weight blended with the LLM/reasoning score
+    statistical_weight: float = 0.4
+
+    # Internal (heterogeneous) data sources
+    internal_data_dir: str = "data/internal"
+
+    # Perception-over-time history file
+    perception_history_path: str = "outputs/perception_history.json"
+
     @classmethod
     def from_env(cls) -> "Config":
         return cls(
@@ -71,6 +80,11 @@ class Config:
                 "USE_MCP_SEQUENTIAL_THINKING", "true"
             ).lower()
             in ("1", "true", "yes"),
+            statistical_weight=float(os.getenv("STATISTICAL_WEIGHT", "0.4")),
+            internal_data_dir=os.getenv("INTERNAL_DATA_DIR", "data/internal"),
+            perception_history_path=os.getenv(
+                "PERCEPTION_HISTORY_PATH", "outputs/perception_history.json"
+            ),
         )
 
     def validate(self) -> None:

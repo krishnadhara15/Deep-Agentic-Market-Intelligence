@@ -140,7 +140,8 @@ def render_results() -> None:
     c4.metric("Confidence", f"{result.get('confidence', 0.0):.2f}")
 
     tabs = st.tabs(
-        ["Report", "Knowledge Graph", "Signals vs Noise", "Reasoning Trace", "Research State"]
+        ["Report", "Knowledge Graph", "Signals vs Noise", "Perception Over Time",
+         "Reasoning Trace", "Research State"]
     )
 
     with tabs[0]:
@@ -170,9 +171,19 @@ def render_results() -> None:
 
     with tabs[2]:
         if signals:
-            rows = sorted(signals, key=lambda s: getattr(s, "score", 0), reverse=True)
+            rows = sorted(
+                signals,
+                key=lambda s: getattr(s, "combined_score", 0) or getattr(s, "score", 0),
+                reverse=True,
+            )
+            st.caption("Combined = blend of reasoning score and statistical corroboration.")
             st.dataframe(
-                [{"signal": s.statement, "score": round(s.score, 2),
+                [{"signal": s.statement,
+                  "combined": round(getattr(s, "combined_score", 0) or s.score, 2),
+                  "reasoning": round(s.score, 2),
+                  "statistical": round(getattr(s, "statistical_score", 0), 2),
+                  "sources": getattr(s, "source_count", 0),
+                  "source_types": ", ".join(getattr(s, "source_types", []) or []),
                   "type": "signal" if s.is_signal else "noise",
                   "category": s.category} for s in rows],
                 use_container_width=True, hide_index=True,
@@ -181,6 +192,25 @@ def render_results() -> None:
             st.info("No scored signals (Tavily mode or none detected).")
 
     with tabs[3]:
+        trends = result.get("signal_trends", [])
+        if trends:
+            arrows = {"new": "🆕", "rising": "↑", "falling": "↓", "stable": "→"}
+            st.caption("Computed by comparing this run to prior runs of the same target/category.")
+            st.dataframe(
+                [{"trend": f"{arrows.get(t.direction, '')} {t.direction}",
+                  "signal": t.subject,
+                  "now": round(t.current_score, 2),
+                  "prev": (round(t.previous_score, 2) if t.previous_score is not None else None),
+                  "delta": round(t.delta, 2),
+                  "runs": t.observations,
+                  "category": t.category} for t in trends],
+                use_container_width=True, hide_index=True,
+            )
+            st.caption("Run again later to see directions shift from 🆕 to ↑/↓/→.")
+        else:
+            st.info("No trends yet — run at least once to start the perception history.")
+
+    with tabs[4]:
         trace = result.get("reasoning_trace", [])
         if trace:
             for step in trace:
@@ -195,7 +225,7 @@ def render_results() -> None:
             for g in gaps:
                 st.markdown(f"- {g}")
 
-    with tabs[4]:
+    with tabs[5]:
         tasks = result.get("task_records", [])
         if tasks:
             st.dataframe(
@@ -207,6 +237,15 @@ def render_results() -> None:
                 st.caption(f"Full state JSON: {result['state_path']}")
         else:
             st.info("No task records.")
+
+        internal = sorted({
+            e["source_title"] for e in result.get("evidence", [])
+            if e.get("source_type") == "internal"
+        })
+        if internal:
+            st.subheader("Internal data sources fused")
+            for s in internal:
+                st.markdown(f"- {s}")
 
 
 def main() -> None:

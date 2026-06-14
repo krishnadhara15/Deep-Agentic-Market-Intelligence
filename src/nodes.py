@@ -3,9 +3,11 @@
 from typing import List
 
 from src.config import Config
+from src.internal_data import internal_evidence_for
 from src.knowledge_graph import extract_graph
 from src.llm import get_llm
 from src.memory import make_task_records, offload_context
+from src.signal_detection import score_signals_statistically
 from src.prompts import (
     PLANNER_PROMPT,
     REPORT_PROMPT,
@@ -28,7 +30,7 @@ from src.state import (
     SynthesisResult,
     VerifierResult,
 )
-from src.tools import multi_source_search
+from src.tools import localize_query, multi_source_search
 
 
 # --------------------------------------------------------------------------- #
@@ -64,13 +66,20 @@ def research_node(state: ResearchTask, config: Config) -> dict:
     """Multi-source retrieval + signal scoring for a single research branch."""
     sub_q = state["sub_question"]
     target = state.get("target", config.target)
+    language = getattr(sub_q, "language", "English")
     llm = get_llm(config)
 
+    search_query = localize_query(sub_q.question, language, config)
     results, _ = multi_source_search(
-        sub_q.question,
+        search_query,
         config,
         web_results=config.searches_per_question,
         community_results=2,
+    )
+
+    # Fuse heterogeneous internal data relevant to this branch
+    internal_items = internal_evidence_for(
+        sub_q.category, sub_q.question, config.internal_data_dir, language
     )
 
     formatted = "\n\n".join(
@@ -78,6 +87,11 @@ def research_node(state: ResearchTask, config: Config) -> dict:
         f"{r['title']} ({r['url']})\n{r['content']}"
         for r in results
     ) or "No search results found for this query."
+    if internal_items:
+        formatted += "\n\n" + "\n\n".join(
+            f"[internal|reliability {i['reliability']:.2f}] {i['source_title']}\n{i['snippet']}"
+            for i in internal_items
+        )
 
     chain = RESEARCHER_PROMPT | llm
     summary = chain.invoke(
@@ -85,7 +99,7 @@ def research_node(state: ResearchTask, config: Config) -> dict:
             "target": target,
             "sub_question": sub_q.question,
             "category": sub_q.category,
-            "language": getattr(sub_q, "language", "English"),
+            "language": language,
             "search_results": formatted,
         }
     ).content
@@ -96,7 +110,7 @@ def research_node(state: ResearchTask, config: Config) -> dict:
             {
                 "sub_question": sub_q.question,
                 "category": sub_q.category,
-                "language": getattr(sub_q, "language", "English"),
+                "language": language,
                 "source_title": r["title"],
                 "source_url": r["url"],
                 "source_type": r["source_type"],
@@ -105,6 +119,9 @@ def research_node(state: ResearchTask, config: Config) -> dict:
                 "summary": summary,
             }
         )
+    for i in internal_items:
+        i["summary"] = summary
+        evidence_items.append(i)
     if not evidence_items:
         evidence_items.append(
             {
@@ -252,11 +269,17 @@ def synthesize_node(state: ResearchState, config: Config) -> dict:
     llm = get_llm(config)
     structured_llm = llm.with_structured_output(SynthesisResult)
 
-    signals = sorted(
-        state.get("signals", []), key=lambda s: getattr(s, "score", 0), reverse=True
+    # Statistical signal detection: blend reasoning score with evidence corroboration
+    ranked = score_signals_statistically(
+        state.get("signals", []),
+        state["evidence"],
+        config.statistical_weight,
+        config.signal_threshold,
     )
     signals_text = "\n".join(
-        f"- ({s.score:.2f}) {s.statement}" for s in signals[:15]
+        f"- (combined {s.combined_score:.2f} = reason {s.score:.2f}/stat "
+        f"{s.statistical_score:.2f}; {s.source_count} sources {s.source_types}) {s.statement}"
+        for s in ranked[:15]
     ) or "No scored signals."
 
     all_evidence = "\n\n---\n\n".join(
@@ -276,7 +299,7 @@ def synthesize_node(state: ResearchState, config: Config) -> dict:
             "all_evidence": all_evidence,
         }
     )
-    return {"synthesis": result}
+    return {"synthesis": result, "ranked_signals": ranked}
 
 
 # --------------------------------------------------------------------------- #
@@ -302,11 +325,12 @@ def write_report_node(state: ResearchState, config: Config) -> dict:
         + "\n".join(f"- {t}" for t in synthesis.key_trends)
     )
 
-    signals = sorted(
+    signals = state.get("ranked_signals") or sorted(
         state.get("signals", []), key=lambda s: getattr(s, "score", 0), reverse=True
     )
     signals_text = "\n".join(
-        f"- ({s.score:.2f}, {'signal' if s.is_signal else 'noise'}) {s.statement}"
+        f"- (combined {getattr(s, 'combined_score', 0) or s.score:.2f}, "
+        f"{'signal' if s.is_signal else 'noise'}; {s.source_count} sources) {s.statement}"
         for s in signals[:15]
     ) or "No scored signals."
 
@@ -327,6 +351,7 @@ def write_report_node(state: ResearchState, config: Config) -> dict:
         {
             "target": state.get("target", config.target),
             "research_question": state["research_question"],
+            "languages": ", ".join(config.languages),
             "synthesis": synthesis_text,
             "signals": signals_text,
             "knowledge_graph": kg_text,

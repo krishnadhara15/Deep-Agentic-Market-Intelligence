@@ -1,0 +1,23 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+*.log
+
+# Generated research artifacts
+outputs/*
+!outputs/.gitkeep
+
+# pyvis front-end assets (generated alongside knowledge-graph HTML)
+lib/
+
+# Local docs (not published)
+docs/

@@ -44,6 +44,9 @@ class Config:
     # Multi-source retrieval
     community_domains: List[str] = field(default_factory=list)
 
+    # Sequential-thinking MCP server
+    use_mcp_sequential_thinking: bool = True
+
     @classmethod
     def from_env(cls) -> "Config":
         return cls(
@@ -64,6 +67,10 @@ class Config:
             max_sub_questions=int(os.getenv("MAX_SUB_QUESTIONS", "6")),
             signal_threshold=float(os.getenv("SIGNAL_THRESHOLD", "0.5")),
             community_domains=_split_env("COMMUNITY_DOMAINS", DEFAULT_COMMUNITY_DOMAINS_STR),
+            use_mcp_sequential_thinking=os.getenv(
+                "USE_MCP_SEQUENTIAL_THINKING", "true"
+            ).lower()
+            in ("1", "true", "yes"),
         )
 
     def validate(self) -> None:

@@ -1,11 +1,16 @@
-"""Sequential-thinking reasoning module.
+"""Sequential-thinking reasoning module backed by a real MCP server.
 
-Mirrors the pattern of a sequential-thinking MCP server: the agent reasons in an
-explicit, ordered chain of steps before producing a structured decision. This keeps
-long-horizon reasoning auditable and is MCP-compatible (a real sequential-thinking
-MCP server could be substituted for `sequential_reason` without changing callers).
+The agent's reasoning chain is recorded through a Model Context Protocol (MCP)
+sequential-thinking server (see `mcp_server/sequential_thinking_server.py`), launched
+and driven via `src/mcp_client.py`. The LLM proposes ordered thoughts; each is logged
+to the MCP server, which tracks the thought history and reports whether more thinking
+is needed — exactly the role of a sequential-thinking MCP server.
+
+If the MCP server or the LLM is unavailable, the module degrades gracefully to an
+in-process reasoning pass so the workflow never breaks.
 """
 
+import json
 from typing import List
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -42,6 +47,36 @@ class _ReasoningTrace(BaseModel):
     steps: List[ReasoningStep]
 
 
+def _track_via_mcp(steps: List[ReasoningStep]) -> None:
+    """Record the reasoning chain through the sequential-thinking MCP server.
+
+    Best-effort: failures are swallowed so reasoning still proceeds.
+    """
+    try:
+        from src.mcp_client import MCPStdioClient, default_server_command
+
+        total = len(steps)
+        with MCPStdioClient(default_server_command(), timeout=8.0) as client:
+            client.initialize()
+            # Confirm the tool is advertised (real MCP discovery step).
+            tools = {t.get("name") for t in client.list_tools()}
+            if "sequentialthinking" not in tools:
+                return
+            for i, step in enumerate(steps, start=1):
+                client.call_tool(
+                    "sequentialthinking",
+                    {
+                        "thought": step.thought,
+                        "thoughtNumber": i,
+                        "totalThoughts": total,
+                        "nextThoughtNeeded": i < total,
+                        "conclusion": step.conclusion or "",
+                    },
+                )
+    except Exception:
+        return
+
+
 def sequential_reason(
     problem: str,
     context: str,
@@ -51,18 +86,22 @@ def sequential_reason(
     """
     Run a sequential-thinking reasoning pass and return the ordered trace.
 
-    Falls back to a single heuristic step if no LLM is configured or the call fails.
+    When an LLM is configured, it proposes the thoughts; the chain is then tracked
+    through the MCP sequential-thinking server. Falls back to a heuristic step if no
+    LLM is configured or the call fails.
     """
     if not config.uses_llm:
-        return [
+        steps = [
             ReasoningStep(
                 step=1,
                 thought=f"Heuristic pass (no LLM): {problem}",
                 conclusion="Proceeding with rule-based coverage check.",
             )
         ]
+        if config.use_mcp_sequential_thinking:
+            _track_via_mcp(steps)
+        return steps
 
-    # Imported lazily so the module stays importable without LLM extras installed.
     from src.llm import get_llm
 
     try:
@@ -73,9 +112,10 @@ def sequential_reason(
             {"problem": problem, "context": context[:6000], "num_steps": num_steps}
         )
         steps = result.steps or []
-        # Normalize step numbering
         for i, s in enumerate(steps, start=1):
             s.step = i
+        if steps and config.use_mcp_sequential_thinking:
+            _track_via_mcp(steps)
         return steps
     except Exception as e:  # pragma: no cover - defensive
         return [
